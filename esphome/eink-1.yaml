@@ -1,10 +1,21 @@
 substitutions:
+  # Configuration variables
+  ha_host_ip: "192.168.50.218" # <-- CHANGE THIS to your Home Assistant IP address
+  sleep_duration_min: "15" # Sleep duration in minutes
+  no_deep_sleep: "false" # Set to "true" to disable deep sleep for debugging/setup
+  dashboard_path: "eink-panel/0" # Path to your HA dashboard view
+  temp_offset: "0.0" # Temperature calibration offset in °C
+  hum_offset: "0.0" # Humidity calibration offset in %
+  wakeup_pin_number: "3" # Wakeup button GPIO. 3=Right Green, 4=Right White, 5=Left Button
+
+  # Internal variables, do not change
   IMAGE_READY_BIT: "0b0001"
   BATTERY_READY_BIT: "0b0010"
   TEMPERATURE_READY_BIT: "0b0100"
   HUMIDITY_READY_BIT: "0b1000"
   ALL_READY_MASK: "0b1111"
 
+# ESP32 configuration
 esp32:
   board: esp32-s3-devkitc-1
   framework:
@@ -43,6 +54,9 @@ api:
     # Extract the API key to the secrets.yaml file
     key: !secret eink_api_key
   on_client_connected:
+    # On client connected:
+    # 1. log the client info and address
+    # 2. update the sensors
     - logger.log:
         format: "Client %s connected to API with IP %s"
         args: ["client_info.c_str()", "client_address.c_str()"]
@@ -50,11 +64,13 @@ api:
     - component.update: battery_voltage
     - component.update: battery_level
 
+# OTA configuration
 ota:
   - platform: esphome
     # Extract the OTA password to the secrets.yaml file
-    password: secret! eink_pass
+    password: !secret eink_pass
 
+# WiFi configuration
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
@@ -96,11 +112,12 @@ output:
 # Deep sleep configuration
 deep_sleep:
   id: deep_sleep_1
-  sleep_duration: 15min # Sleep for 15 minutes between updates
+  sleep_duration: ${sleep_duration_min}min # Sleep for X minutes between updates
   # Optional: Use a button to wake from sleep
-  wakeup_pin: GPIO3 # Right Green Button.
+  wakeup_pin: GPIO${wakeup_pin_number}
   wakeup_pin_mode: INVERT_WAKEUP
 
+# Global variables
 globals:
   - id: sensors_ready_mask
     type: uint8_t
@@ -111,9 +128,9 @@ globals:
     restore_value: no
     initial_value: "false"
 
-# Script to handle sleep after display update
 script:
   - id: sleep_after_update
+    # Script to handle sleep after display update
     mode: single # Only allow one instance to run
     then:
       - logger.log: "=== Sleep requested. Waiting up to 30s for HA API... ==="
@@ -131,11 +148,18 @@ script:
             - logger.log: "=== HA API is connected. States published. Proceeding to sleep. ==="
       - logger.log: "=== Display updated, preparing to sleep in 5 seconds ==="
       - delay: 5s
-      - logger.log: "=== Entering deep sleep now... ==="
-      - output.turn_off: led_output
-      - deep_sleep.enter: deep_sleep_1
+      - if:
+          condition:
+            lambda: 'return strcmp("${no_deep_sleep}", "false") == 0;'
+          then:
+            - logger.log: "=== Entering deep sleep now... ==="
+            - output.turn_off: led_output
+            - deep_sleep.enter: deep_sleep_1
+          else:
+            - logger.log: "=== Deep sleep disabled, staying awake. ==="
 
   - id: maybe_render_display
+    # Script to render the display if all data is ready
     mode: queued
     then:
       - if:
@@ -150,8 +174,8 @@ script:
             - delay: 30s
             - script.execute: sleep_after_update
 
-  # Safety timeout script - runs in parallel with main operations
   - id: safety_timeout
+    # Safety timeout script - runs in parallel with main operations
     then:
       - delay: 120s
       - logger.log: "=== Safety timeout reached (120s), forcing sleep ==="
@@ -166,7 +190,7 @@ sensor:
       name: "Temperature"
       id: temp_sensor
       filters:
-        - offset: 0.0 # Calibration offset if needed
+        - offset: ${temp_offset}
       on_value:
         then:
           - lambda: |-
@@ -178,7 +202,7 @@ sensor:
       name: "Humidity"
       id: hum_sensor
       filters:
-        - offset: 0.0 # Calibration offset if needed
+        - offset: ${hum_offset}
       on_value:
         then:
           - lambda: |-
@@ -237,6 +261,7 @@ interval:
     then:
       - logger.log: "Device status: Awake, WiFi connected"
 
+# SPI bus for display
 spi:
   clk_pin: GPIO7
   mosi_pin: GPIO9
@@ -246,6 +271,7 @@ i2c:
   scl: GPIO20
   sda: GPIO19
 
+# HTTP request configuration
 http_request:
   verify_ssl: false
   timeout: 20s
@@ -258,12 +284,13 @@ font:
     size: 20
     glyphs: " %-/0123456789ACN°" # Digits plus characters used in status text
 
+# Download the dashboard image from Home Assistant
 online_image:
   - id: dashboard_image
     format: PNG
     type: RGB565
     buffer_size: 65536
-    url: http://192.168.50.218:10000/eink-panel/0?viewport=800x480
+    url: "http://${ha_host_ip}:10000/${dashboard_path}?viewport=800x480"
     on_download_finished:
       - logger.log: "=== Image download completed! ==="
       - lambda: |-
@@ -276,6 +303,7 @@ online_image:
         - delay: 5s
         - script.execute: sleep_after_update
 
+# Display configuration
 display:
   - platform: epaper_spi
     id: epaper_display

@@ -1,0 +1,25 @@
+E-Ink Weather High Contrast:
+  # General Text/Icon Colors (Optional but helpful for overall contrast)
+  # You may need to adjust these based on your base theme.
+  primary-color: "#1E40AF"
+  text-primary-color: "#000000"
+
+  # --- Themeable Weather Icons ---
+
+  # Cloud front: Darker blue 
+  weather-icon-cloud-front-color: "#1E40AF"
+
+  # Cloud back: Lighter blue
+  weather-icon-cloud-back-color: "#7487CF"
+
+  # Sun color: Darker yellow for maximum visibility
+  weather-icon-sun-color: "#BA8C0D"
+
+  # Moon color: Dark Darker yellow for maximum visibility
+  weather-icon-moon-color: "#917831"
+
+  # Rain/Precipitation Color: A deep, distinct blue
+  weather-icon-rain-color: "#1E40AF"
+
+  # Snowy/Hail: Use the same deep blue for maximum visibility of rain/snow elements
+  weather-icon-snow-color: "#1E40AF"

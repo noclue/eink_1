@@ -1,0 +1,39 @@
+views:
+  - title: Home
+    sections:
+      - type: grid
+        cards:
+          - show_current: true
+            show_forecast: true
+            type: weather-forecast
+            entity: weather.vremeto_met_no_home
+            forecast_type: hourly
+            name: Времето
+            forecast_slots: 8
+            grid_options:
+              columns: full
+          - show_current: false
+            show_forecast: true
+            type: weather-forecast
+            entity: weather.vremeto_met_no_home
+            forecast_type: daily
+            forecast_slots: 8
+            grid_options:
+              columns: full
+        column_span: 2
+    type: sections
+    max_columns: 3
+    cards: []
+    badges:
+      - type: entity
+        show_name: false
+        show_state: true
+        show_icon: true
+        entity: sensor.weekday
+      - type: entity
+        entity: sensor.date
+    header:
+      layout: responsive
+      badges_position: top
+      badges_wrap: wrap
+    theme: E-Ink Weather High Contrast
