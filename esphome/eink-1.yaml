@@ -1,0 +1,341 @@
+substitutions:
+  IMAGE_READY_BIT: "0b0001"
+  BATTERY_READY_BIT: "0b0010"
+  TEMPERATURE_READY_BIT: "0b0100"
+  HUMIDITY_READY_BIT: "0b1000"
+  ALL_READY_MASK: "0b1111"
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+  variant: ESP32S3
+
+# Boot automation - runs when device wakes up
+esphome:
+  name: eink-1
+  friendly_name: eink-1
+  on_boot:
+    - priority: 600 # Enable battery monitoring early
+      then:
+        - output.turn_on: bsp_battery_enable
+    - priority: -100 # Run after other components
+      then:
+        - lambda: |-
+            id(sensors_ready_mask) = 0;
+            id(display_drawn) = false;
+        - logger.log: "=== Device woke up from deep sleep ==="
+        - output.turn_on: led_output
+        - delay: 1s
+        - logger.log: "Starting ESPHome application..."
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+# Enable logging over USB CDC (for ESP32-S3)
+logger:
+  hardware_uart: UART0
+
+# Enable Home Assistant API
+api:
+  encryption:
+    # Extract the API key to the secrets.yaml file
+    key: !secret eink_api_key
+  on_client_connected:
+    - logger.log:
+        format: "Client %s connected to API with IP %s"
+        args: ["client_info.c_str()", "client_address.c_str()"]
+    - component.update: sht4x_sensor
+    - component.update: battery_voltage
+    - component.update: battery_level
+
+ota:
+  - platform: esphome
+    # Extract the OTA password to the secrets.yaml file
+    password: secret! eink_pass
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: True
+  on_connect:
+    then:
+      - logger.log: "=== WiFi Connected Successfully! ==="
+      - delay: 500ms
+      - logger.log: "LED should be OFF now (inverted)"
+      # Start safety timeout when WiFi connects
+      - script.execute: safety_timeout
+      # Trigger image download after WiFi connects
+      - component.update: dashboard_image
+  on_disconnect:
+    then:
+      - logger.log: "=== WiFi Disconnected ==="
+      - output.turn_on: led_output
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Eink-1 Fallback Hotspot"
+    # Extract the hotspot password to the secrets.yaml file
+    password: !secret eink_hotspot
+
+captive_portal:
+
+# Output configuration
+output:
+  # LED - reTerminal E1002 onboard LED is on GPIO6
+  - platform: gpio
+    pin: GPIO6
+    id: led_output
+    inverted: true
+
+  # Battery monitoring enable pin
+  - platform: gpio
+    pin: GPIO21
+    id: bsp_battery_enable
+
+# Deep sleep configuration
+deep_sleep:
+  id: deep_sleep_1
+  sleep_duration: 15min # Sleep for 15 minutes between updates
+  # Optional: Use a button to wake from sleep
+  wakeup_pin: GPIO3 # Right Green Button.
+  wakeup_pin_mode: INVERT_WAKEUP
+
+globals:
+  - id: sensors_ready_mask
+    type: uint8_t
+    restore_value: no
+    initial_value: "0"
+  - id: display_drawn
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+# Script to handle sleep after display update
+script:
+  - id: sleep_after_update
+    mode: single # Only allow one instance to run
+    then:
+      - logger.log: "=== Sleep requested. Waiting up to 30s for HA API... ==="
+      - wait_until:
+          timeout: 30s # Wait a maximum of 30 seconds
+          condition:
+            api.connected:
+      - if:
+          condition:
+            not:
+              api.connected:
+          then:
+            - logger.log: "=== HA API did not connect in 30s. Sleeping anyway. ==="
+          else:
+            - logger.log: "=== HA API is connected. States published. Proceeding to sleep. ==="
+      - logger.log: "=== Display updated, preparing to sleep in 5 seconds ==="
+      - delay: 5s
+      - logger.log: "=== Entering deep sleep now... ==="
+      - output.turn_off: led_output
+      - deep_sleep.enter: deep_sleep_1
+
+  - id: maybe_render_display
+    mode: queued
+    then:
+      - if:
+          condition:
+            lambda: |-
+              const uint8_t ALL_READY = ${ALL_READY_MASK};
+              return (id(sensors_ready_mask) == ALL_READY) && !id(display_drawn);
+          then:
+            - logger.log: "=== All data ready, refreshing display ==="
+            - component.update: epaper_display
+            - lambda: "id(display_drawn) = true;"
+            - delay: 30s
+            - script.execute: sleep_after_update
+
+  # Safety timeout script - runs in parallel with main operations
+  - id: safety_timeout
+    then:
+      - delay: 120s
+      - logger.log: "=== Safety timeout reached (120s), forcing sleep ==="
+      - script.execute: sleep_after_update
+
+# Sensors: Battery, Temperature, and Humidity
+sensor:
+  # Temperature and Humidity sensor (SHT4x on I2C)
+  - platform: sht4x
+    id: sht4x_sensor
+    temperature:
+      name: "Temperature"
+      id: temp_sensor
+      filters:
+        - offset: 0.0 # Calibration offset if needed
+      on_value:
+        then:
+          - lambda: |-
+              if (!std::isnan(x)) {
+                id(sensors_ready_mask) |= ${TEMPERATURE_READY_BIT};
+                id(maybe_render_display).execute();
+              }
+    humidity:
+      name: "Humidity"
+      id: hum_sensor
+      filters:
+        - offset: 0.0 # Calibration offset if needed
+      on_value:
+        then:
+          - lambda: |-
+              if (!std::isnan(x)) {
+                id(sensors_ready_mask) |= ${HUMIDITY_READY_BIT};
+                id(maybe_render_display).execute();
+              }
+    update_interval: 10s
+
+  # Battery monitoring
+  - platform: adc
+    pin: GPIO1
+    name: "Battery Voltage"
+    id: battery_voltage
+    update_interval: 10s
+    attenuation: 12db
+    filters:
+      - multiply: 2.0 # Voltage divider compensation
+
+  - platform: template
+    name: "Battery Level"
+    id: battery_level
+    unit_of_measurement: "%"
+    icon: "mdi:battery"
+    device_class: battery
+    state_class: measurement
+    lambda: "return id(battery_voltage).state;"
+    update_interval: 10s
+    filters:
+      - calibrate_linear:
+          - 4.15 -> 100.0
+          - 3.96 -> 90.0
+          - 3.91 -> 80.0
+          - 3.85 -> 70.0
+          - 3.80 -> 60.0
+          - 3.75 -> 50.0
+          - 3.68 -> 40.0
+          - 3.58 -> 30.0
+          - 3.49 -> 20.0
+          - 3.41 -> 10.0
+          - 3.30 -> 5.0
+          - 3.27 -> 0.0
+      - clamp:
+          min_value: 0
+          max_value: 100
+    on_value:
+      then:
+        - lambda: |-
+            if (!std::isnan(x)) {
+              id(sensors_ready_mask) |= ${BATTERY_READY_BIT};
+              id(maybe_render_display).execute();
+            }
+
+interval:
+  - interval: 10s # Log status every 10 seconds
+    then:
+      - logger.log: "Device status: Awake, WiFi connected"
+
+spi:
+  clk_pin: GPIO7
+  mosi_pin: GPIO9
+
+# I2C bus for temperature and humidity sensor
+i2c:
+  scl: GPIO20
+  sda: GPIO19
+
+http_request:
+  verify_ssl: false
+  timeout: 20s
+  watchdog_timeout: 25s
+
+# Fonts for status display
+font:
+  - file: "gfonts://Roboto"
+    id: status_font
+    size: 20
+    glyphs: " %-/0123456789ACN°" # Digits plus characters used in status text
+
+online_image:
+  - id: dashboard_image
+    format: PNG
+    type: RGB565
+    buffer_size: 65536
+    url: http://192.168.50.218:10000/eink-panel/0?viewport=800x480
+    on_download_finished:
+      - logger.log: "=== Image download completed! ==="
+      - lambda: |-
+          id(sensors_ready_mask) |= ${IMAGE_READY_BIT};
+      - script.execute: maybe_render_display
+    on_error:
+      then:
+        - logger.log: "=== Image download ERROR: ${error} ==="
+        - logger.log: "=== Sleeping anyway due to error ==="
+        - delay: 5s
+        - script.execute: sleep_after_update
+
+display:
+  - platform: epaper_spi
+    id: epaper_display
+    model: 7.3in-spectra-e6
+    cs_pin: GPIO10
+    dc_pin: GPIO11
+    reset_pin:
+      number: GPIO12
+      inverted: false
+    busy_pin:
+      number: GPIO13
+      inverted: true
+    update_interval: never
+    lambda: |-
+      // Draw the dashboard image first
+      it.image(0, 0, id(dashboard_image));
+
+      // Draw status information in bottom left corner - AFTER the image
+      // Position: 30px from left, 10px from bottom (480-10=470)
+      std::string status_text;
+
+      // Battery level
+      bool battery_ready = false;
+      if (id(battery_level).has_state()) {
+        float battery = id(battery_level).state;
+        if (!std::isnan(battery)) {
+          int battery_percent = static_cast<int>(battery);
+          status_text += std::to_string(battery_percent) + "%";
+          battery_ready = true;
+        }
+      }
+      if (!battery_ready) {
+        status_text += "N/A";
+      }
+
+      // Temperature in Celsius
+      if (id(temp_sensor).has_state()) {
+        float temp_c = id(temp_sensor).state;
+        if (!std::isnan(temp_c)) {
+          if (!status_text.empty()) {
+            status_text += "  ";
+          }
+          int temp_int = static_cast<int>(temp_c);
+          status_text += std::to_string(temp_int) + "°C";
+        }
+      }
+
+      // Humidity
+      if (id(hum_sensor).has_state()) {
+        float humidity = id(hum_sensor).state;
+        if (!std::isnan(humidity)) {
+          if (!status_text.empty()) {
+            status_text += "  ";
+          }
+          int humidity_int = static_cast<int>(humidity);
+          status_text += std::to_string(humidity_int) + "%";
+        }
+      }
+
+      ESP_LOGD("display", "Status: %s", status_text.c_str());
+
+      // Draw black text on white background
+      it.printf(30, 470, id(status_font), COLOR_OFF, TextAlign::BOTTOM_LEFT, "%s", status_text.c_str());
