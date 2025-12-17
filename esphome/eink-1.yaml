@@ -307,15 +307,7 @@ online_image:
 display:
   - platform: epaper_spi
     id: epaper_display
-    model: 7.3in-spectra-e6
-    cs_pin: GPIO10
-    dc_pin: GPIO11
-    reset_pin:
-      number: GPIO12
-      inverted: false
-    busy_pin:
-      number: GPIO13
-      inverted: true
+    model: Seeed-reTerminal-E1002
     update_interval: never
     lambda: |-
       // Draw the dashboard image first
