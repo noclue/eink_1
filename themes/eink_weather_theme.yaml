@@ -6,20 +6,20 @@ E-Ink Weather High Contrast:
 
   # --- Themeable Weather Icons ---
 
-  # Cloud front: Darker blue 
-  weather-icon-cloud-front-color: "#1E40AF"
+  # Cloud front: Standard for the display blue
+  weather-icon-cloud-front-color: "#5080b8"
 
-  # Cloud back: Lighter blue
-  weather-icon-cloud-back-color: "#7487CF"
+  # Cloud back: Darker blue
+  weather-icon-cloud-back-color: "#204060"
 
   # Sun color: Darker yellow for maximum visibility
-  weather-icon-sun-color: "#BA8C0D"
+  weather-icon-sun-color: "#917831"
 
-  # Moon color: Dark Darker yellow for maximum visibility
+  # Moon color: Darker yellow for maximum visibility
   weather-icon-moon-color: "#917831"
 
-  # Rain/Precipitation Color: A deep, distinct blue
-  weather-icon-rain-color: "#1E40AF"
+  # Rain/Precipitation Color: Standard for the display blue
+  weather-icon-rain-color: "#5080b8"
 
-  # Snowy/Hail: Use the same deep blue for maximum visibility of rain/snow elements
-  weather-icon-snow-color: "#1E40AF"
+  # Snowy/Hail: Standard for the display blue
+  weather-icon-snow-color: "#5080b8"
